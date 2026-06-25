@@ -31,10 +31,8 @@ html, body, [class*="css"], .stMarkdown, .stTextInput, button {
     font-family: 'Noto Sans KR', sans-serif !important;
 }
 
-/* 전체 배경 */
 .stApp { background: #F8F9FA; }
 
-/* 메인 컨텐츠 최대 너비 */
 .block-container {
     max-width: 700px !important;
     padding-top: 1.5rem !important;
@@ -47,12 +45,6 @@ html, body, [class*="css"], .stMarkdown, .stTextInput, button {
     padding: 20px 24px 18px;
     margin-bottom: 16px;
     box-shadow: 0 4px 16px rgba(0,0,0,.07);
-}
-.header-card h2 {
-    font-size: 1.3rem;
-    font-weight: 700;
-    color: #111827;
-    margin: 0 0 4px 0;
 }
 .progress-meta {
     font-size: 0.82rem;
@@ -69,27 +61,22 @@ html, body, [class*="css"], .stMarkdown, .stTextInput, button {
     box-shadow: 0 4px 16px rgba(0,0,0,.07);
 }
 
-/* 할 일 항목 래퍼 */
-.todo-row {
-    background: #fff;
-    border-radius: 10px;
-    padding: 10px 14px;
-    margin-bottom: 8px;
-    box-shadow: 0 1px 4px rgba(0,0,0,.07);
-    display: flex;
-    align-items: center;
-    gap: 10px;
-}
-
 /* 뱃지 */
 .badge {
     display: inline-block;
-    font-size: 0.7rem;
+    font-size: 0.68rem;
     font-weight: 500;
-    padding: 2px 9px;
+    padding: 1px 8px;
     border-radius: 999px;
     white-space: nowrap;
+}
+
+/* 날짜 메타 */
+.todo-meta {
+    font-size: 0.68rem;
+    color: #9CA3AF;
     margin-top: 3px;
+    line-height: 1.4;
 }
 
 /* 완료 텍스트 */
@@ -119,7 +106,7 @@ html, body, [class*="css"], .stMarkdown, .stTextInput, button {
     margin-bottom: 8px;
 }
 
-/* Streamlit 컴포넌트 미세 조정 */
+/* Streamlit 컴포넌트 */
 .stTextInput > div > div > input {
     border-radius: 8px !important;
     background: #F3F4F6 !important;
@@ -147,10 +134,7 @@ html, body, [class*="css"], .stMarkdown, .stTextInput, button {
     font-family: 'Noto Sans KR', sans-serif !important;
     font-weight: 500 !important;
 }
-/* 진행률 바 둥글게 */
 .stProgress > div > div > div > div { border-radius: 999px !important; }
-
-/* 불필요한 빈공간 제거 */
 div[data-testid="column"] { gap: 0 !important; }
 </style>
 """, unsafe_allow_html=True)
@@ -172,6 +156,16 @@ if "editing_id" not in st.session_state:
 def now_iso() -> str:
     return datetime.now().isoformat()
 
+def fmt_dt(iso: str | None) -> str:
+    """ISO 문자열 → '24.01.15 09:30' 형태"""
+    if not iso:
+        return ""
+    try:
+        dt = datetime.fromisoformat(iso)
+        return dt.strftime("%y.%m.%d %H:%M")
+    except ValueError:
+        return ""
+
 def get_scoped(cat: str) -> list:
     if cat == "all":
         return st.session_state.todos
@@ -182,8 +176,14 @@ def badge_html(category: str) -> str:
     bg = color + "22"
     return f'<span class="badge" style="background:{bg};color:{color};">{label}</span>'
 
+def meta_html(todo: dict) -> str:
+    """작성일 + 완료일 작은 텍스트"""
+    parts = [f"작성 {fmt_dt(todo.get('createdAt'))}"]
+    if todo.get("completed") and todo.get("completedAt"):
+        parts.append(f"완료 {fmt_dt(todo['completedAt'])}")
+    return f'<div class="todo-meta">{" &nbsp;·&nbsp; ".join(parts)}</div>'
+
 def tab_label(cat: str) -> str:
-    """탭 레이블: 카테고리명 (완료/전체)"""
     label = "전체" if cat == "all" else CATEGORIES[cat][0]
     items = get_scoped(cat)
     if not items:
@@ -191,29 +191,76 @@ def tab_label(cat: str) -> str:
     done = sum(1 for t in items if t["completed"])
     return f"{label} ({done}/{len(items)})"
 
+def render_input_form(default_cat: str):
+    """
+    할 일 입력 폼.
+    default_cat: 탭에서 넘어온 카테고리 키 ('all'이면 'work' 사용)
+    """
+    effective_default = default_cat if default_cat != "all" else "work"
+
+    cat_keys   = list(CATEGORIES.keys())
+    cat_labels = [CATEGORIES[k][0] for k in cat_keys]
+    default_idx = cat_keys.index(effective_default)
+
+    st.markdown('<div class="form-card">', unsafe_allow_html=True)
+    fc1, fc2, fc3 = st.columns([5, 2, 1])
+    with fc1:
+        new_text = st.text_input(
+            "할 일",
+            placeholder="할 일을 입력하세요",
+            label_visibility="collapsed",
+            key=f"new_todo_input_{default_cat}",
+        )
+    with fc2:
+        selected_label = st.selectbox(
+            "카테고리",
+            cat_labels,
+            index=default_idx,
+            label_visibility="collapsed",
+            key=f"new_todo_cat_{default_cat}",
+        )
+    with fc3:
+        add_clicked = st.button("＋", type="primary", use_container_width=True,
+                                key=f"add_btn_{default_cat}")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    if add_clicked:
+        if new_text.strip():
+            selected_cat = cat_keys[cat_labels.index(selected_label)]
+            st.session_state.todos.append({
+                "id":          str(uuid.uuid4()),
+                "text":        new_text.strip(),
+                "category":    selected_cat,
+                "completed":   False,
+                "createdAt":   now_iso(),
+                "updatedAt":   now_iso(),
+                "completedAt": None,
+            })
+            st.rerun()
+        else:
+            st.warning("⚠️ 할 일 내용을 입력해주세요.")
+
 def render_todo_list(cat: str):
-    """필터링된 할 일 목록을 렌더링한다."""
+    """필터링된 할 일 목록 렌더링."""
     filtered = get_scoped(cat)
 
     # ── 빈 상태 ──
     if not filtered:
-        if len(st.session_state.todos) > 0 and all(t["completed"] for t in get_scoped(cat)):
-            msg = "🎉 모두 완료했습니다!"
-        else:
-            msg = "📋 할 일을 추가해보세요"
+        scoped_all = get_scoped(cat)
+        all_done = len(st.session_state.todos) > 0 and len(scoped_all) == 0
+        msg = "📋 할 일을 추가해보세요"
         st.markdown(f'<div class="empty-state">{msg}</div>', unsafe_allow_html=True)
         return
 
-    # ── 항목 렌더링 ──
     for todo in filtered:
         is_editing = st.session_state.editing_id == todo["id"]
-        _, color   = CATEGORIES.get(todo["category"], ("?", "#888"))
 
         if is_editing:
             # ── 수정 모드 ──
             st.markdown('<div class="edit-card">', unsafe_allow_html=True)
             cat_keys   = list(CATEGORIES.keys())
             cat_labels = [CATEGORIES[k][0] for k in cat_keys]
+            cur_idx    = cat_keys.index(todo["category"]) if todo["category"] in cat_keys else 0
 
             ec1, ec2 = st.columns([5, 2])
             with ec1:
@@ -224,7 +271,6 @@ def render_todo_list(cat: str):
                     key=f"edit_text_{todo['id']}",
                 )
             with ec2:
-                cur_idx = cat_keys.index(todo["category"]) if todo["category"] in cat_keys else 0
                 edit_cat_label = st.selectbox(
                     "카테고리",
                     cat_labels,
@@ -269,16 +315,19 @@ def render_todo_list(cat: str):
                 if checked != todo["completed"]:
                     for t in st.session_state.todos:
                         if t["id"] == todo["id"]:
-                            t["completed"] = not t["completed"]
-                            t["updatedAt"] = now_iso()
+                            t["completed"]   = checked
+                            t["updatedAt"]   = now_iso()
+                            # 완료 → completedAt 기록 / 미완료 → 초기화
+                            t["completedAt"] = now_iso() if checked else None
                             break
                     st.rerun()
 
             with col_txt:
                 st.markdown(
                     f'<div style="padding-top:2px;">'
-                    f'<span class="{text_cls}" style="font-size:0.97rem;">{todo["text"]}</span><br>'
-                    f'{badge_html(todo["category"])}'
+                    f'<span class="{text_cls}" style="font-size:0.97rem;">{todo["text"]}</span>'
+                    f'&nbsp;&nbsp;{badge_html(todo["category"])}'
+                    f'{meta_html(todo)}'
                     f'</div>',
                     unsafe_allow_html=True,
                 )
@@ -302,7 +351,7 @@ def render_todo_list(cat: str):
     completed_in_view = [t for t in filtered if t["completed"]]
     if completed_in_view:
         st.divider()
-        col_l, col_r = st.columns([3, 1])
+        _, col_r = st.columns([3, 1])
         with col_r:
             if st.button(
                 f"완료 {len(completed_in_view)}건 삭제",
@@ -341,53 +390,9 @@ st.markdown("</div>", unsafe_allow_html=True)
 
 
 # ─────────────────────────────────────────
-# ② 입력 폼
+# ② 카테고리 탭 (입력 폼 + 목록 모두 탭 안으로)
 # ─────────────────────────────────────────
-st.markdown('<div class="form-card">', unsafe_allow_html=True)
-
-cat_keys   = list(CATEGORIES.keys())                 # work, personal, parenting
-cat_labels = [CATEGORIES[k][0] for k in cat_keys]   # 업무, 개인, 육아
-
-fc1, fc2, fc3 = st.columns([5, 2, 1])
-with fc1:
-    new_text = st.text_input(
-        "할 일",
-        placeholder="할 일을 입력하세요",
-        label_visibility="collapsed",
-        key="new_todo_input",
-    )
-with fc2:
-    selected_label = st.selectbox(
-        "카테고리",
-        cat_labels,
-        label_visibility="collapsed",
-        key="new_todo_cat",
-    )
-with fc3:
-    add_clicked = st.button("＋", type="primary", use_container_width=True)
-
-st.markdown("</div>", unsafe_allow_html=True)
-
-# 추가 처리
-if add_clicked:
-    if new_text.strip():
-        selected_cat = cat_keys[cat_labels.index(selected_label)]
-        st.session_state.todos.append({
-            "id":        str(uuid.uuid4()),
-            "text":      new_text.strip(),
-            "category":  selected_cat,
-            "completed": False,
-            "createdAt": now_iso(),
-            "updatedAt": now_iso(),
-        })
-        st.rerun()
-    else:
-        st.warning("⚠️ 할 일 내용을 입력해주세요.")
-
-
-# ─────────────────────────────────────────
-# ③ 카테고리 탭 + 할 일 목록
-# ─────────────────────────────────────────
+cat_keys   = list(CATEGORIES.keys())
 tab_keys   = ["all"] + cat_keys
 tab_labels = [tab_label(k) for k in tab_keys]
 
@@ -395,4 +400,7 @@ tabs = st.tabs(tab_labels)
 
 for tab_obj, cat_key in zip(tabs, tab_keys):
     with tab_obj:
+        # 입력 폼 (탭 카테고리를 기본값으로)
+        render_input_form(cat_key)
+        # 할 일 목록
         render_todo_list(cat_key)
